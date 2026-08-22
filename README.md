@@ -1,4 +1,4 @@
-# claude-skills
+# sao-label-skills
 
 Private skills for Claude Code.
 
