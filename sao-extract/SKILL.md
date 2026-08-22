@@ -74,6 +74,11 @@ fix.
 Run a small pilot and check four things. Each maps to a failure mode that
 otherwise contaminates the full run quietly.
 
+**Pilot on a spread, not the first N.** Taking the first N documents by id samples
+whatever the id happens to sort by, which is rarely length. A pilot exists to surface
+length-dependent failures, so it has to reach both ends of the distribution and must
+include the longest document.
+
 **Truncation.** With thinking enabled, reasoning tokens draw from the *same*
 `max_tokens` budget as the answer. A ceiling sized for the expected answer gets
 eaten by reasoning and the response truncates. This is not random loss — it hits

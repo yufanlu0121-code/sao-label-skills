@@ -1,8 +1,8 @@
 """Extract structured records from a corpus via the Anthropic Message Batches API.
 
 TEMPLATE: adapt build_schema() and TOPLEVEL_KEYS to your output schema. Everything
-else -- homogeneity enforcement, truncation and contamination checks, resumability,
-multi-account keys -- is domain-independent.
+else -- homogeneity enforcement, truncation and contamination checks, spread-sampled
+pilots, resumability, multi-account keys -- is domain-independent.
 
 Narratives are read from `narratives.parquet` (built by `prepare_full.py`) and one
 JSON extraction is written per filing to `raw_full/{sao_id}.json`. No intermediate
@@ -460,6 +460,32 @@ def load_narratives() -> pd.DataFrame:
     return frame.set_index("sao_id").sort_index()
 
 
+def spread_selection(narratives: pd.DataFrame, todo: list[str], n: int) -> list[str]:
+    """Pick n pending filings spanning the length distribution.
+
+    `--limit` alone takes the first n by `sao_id`, which orders by NAIC code and so
+    draws an arbitrary, length-unrepresentative slice. A pilot exists to surface
+    length-dependent failures -- truncation above all -- so it has to reach both
+    ends of the distribution. The longest pending filing is always included, since
+    that is where the token ceiling is tested.
+
+    Args:
+        narratives: The corpus, indexed by `sao_id`.
+        todo: Pending `sao_id` values.
+        n: How many to select.
+
+    Returns:
+        A new list of `sao_id` values, sorted by length.
+    """
+    if n >= len(todo):
+        return todo
+    ordered = narratives.loc[todo].sort_values("n_words").index.tolist()
+    step = len(ordered) / n
+    picked = {ordered[int(i * step)] for i in range(n)}
+    picked.add(ordered[-1])  # the longest: the truncation stress case
+    return narratives.loc[list(picked)].sort_values("n_words").index.tolist()
+
+
 def pending(narratives: pd.DataFrame) -> list[str]:
     """List the filings with no valid extraction output yet.
 
@@ -545,7 +571,11 @@ def cmd_submit(args: argparse.Namespace) -> None:
 
     todo = pending(narratives)
     if args.limit:
-        todo = todo[: args.limit]
+        todo = (
+            spread_selection(narratives, todo, args.limit)
+            if args.spread
+            else todo[: args.limit]
+        )
     if not todo:
         logger.info("Nothing pending. All narratives have a valid extraction.")
         return
@@ -678,6 +708,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
 
         written = 0
         truncated = 0
+        stop_reasons: dict[str, int] = {}
         near_limit: list[tuple[str, int]] = []
         response_models: dict[str, int] = {}
         usage_in = 0
@@ -697,6 +728,9 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             # The served model is recorded per filing, not assumed from the request:
             # assert_homogeneous uses it to catch a run split across two models.
             response_models[message.model] = response_models.get(message.model, 0) + 1
+            stop_reasons[message.stop_reason] = (
+                stop_reasons.get(message.stop_reason, 0) + 1
+            )
             usage_in += message.usage.input_tokens
             usage_out += message.usage.output_tokens
 
@@ -741,6 +775,8 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         entry["response_models"] = response_models
         entry["usage"] = {"input_tokens": usage_in, "output_tokens": usage_out}
         save_state(state)
+        entry["stop_reasons"] = stop_reasons
+        entry["near_limit"] = len(near_limit)
         logger.info(
             "Batch %s: wrote %d files | served by %s | %s in / %s out tokens",
             entry["id"],
@@ -748,6 +784,16 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             response_models or "n/a",
             f"{usage_in:,}",
             f"{usage_out:,}",
+        )
+        # Reported every fetch, not only on failure: a rising near-limit count is the
+        # early warning that the corpus tail is longer than the pilot suggested.
+        logger.info(
+            "Batch %s: stop_reason %s | %d response(s) at >=%.0f%% of the %s ceiling",
+            entry["id"],
+            stop_reasons or "n/a",
+            len(near_limit),
+            TRUNCATION_HEADROOM * 100,
+            f"{MAX_TOKENS:,}",
         )
         if truncated:
             logger.error(
@@ -820,6 +866,12 @@ def main() -> None:
     )
     submit.add_argument(
         "--limit", type=int, default=0, help="queue at most N filings (0 = all)"
+    )
+    submit.add_argument(
+        "--spread",
+        action="store_true",
+        help="with --limit, pick filings spanning the length distribution and "
+        "always include the longest, instead of the first N by sao_id",
     )
     submit.add_argument(
         "--effort",
