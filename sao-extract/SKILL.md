@@ -1,6 +1,6 @@
 ---
 name: sao-extract
-description: Run a reproducible, homogeneous LLM extraction over a whole corpus of documents via the Anthropic Batches API, producing one structured record per document for statistical analysis. Built for the SAO project — extracting risk statements from US P&C Statement of Actuarial Opinion filings — but applies to any corpus-to-dataset job. Use this whenever the user wants to extract structured fields, codes, or annotations from many documents (filings, transcripts, reports, articles, abstracts, case notes) into a dataset, including phrases like "extract X from all these documents", "code these texts", "turn this corpus into a dataset", "run my prompt over N files", or "content analysis at scale". Also use it when someone is midway through such a job and hits truncation, JSON parse failures, cost surprises, drift between batches, or asks how reproducible their LLM-derived variables are. Especially important for research where the extracted fields become regression variables, since it covers measurement reliability (ICC), treatment homogeneity, and the silent failure modes that bias results.
+description: Run a reproducible, homogeneous LLM extraction over a whole corpus of documents via the Anthropic Batches API, producing one structured record per document for statistical analysis. Built for the SAO project — extracting risk statements from US P&C Statement of Actuarial Opinion filings — but applies to any corpus-to-dataset job. Use this whenever the user wants to extract structured fields, codes, or annotations from many documents (filings, transcripts, reports, articles, abstracts, case notes) into a dataset, including phrases like "extract X from all these documents", "code these texts", "turn this corpus into a dataset", "run my prompt over N files", or "content analysis at scale". Also use it when someone is midway through such a job and hits truncation, JSON parse failures, cost surprises, drift between batches, or asks how reproducible their LLM-derived variables are. Especially important for research where the extracted fields become regression variables, since it covers measurement reliability (ICC), validity against hand annotation, treatment homogeneity, and the silent failure modes that bias results. Also use it when revising a prompt mid-project, verifying that quoted spans really appear in the source, or building a hand-annotated validation sample to correct estimates for misclassification.
 ---
 
 # SAO Extract — reproducible LLM corpus extraction
@@ -21,9 +21,11 @@ silently corrupt results rather than raising errors.
 3. Constrain output with a JSON Schema
 4. Pilot: measure truncation, contamination, and reproducibility
 5. Submit via the Batches API, resumably
-6. Assemble, reporting reliability alongside the estimates
+6. Check the output against the source
+7. Validate against human annotation, and correct for the error you measure
+8. Assemble, reporting reliability alongside the estimates
 
-Work through these in order. Steps 4's numbers determine whether step 5 is worth
+Work through these in order. Step 4's numbers determine whether step 5 is worth
 running at all.
 
 ## 1. One corpus file, never one file per document
@@ -59,6 +61,16 @@ treatment" and "we can show one treatment".
 Also record **the model that actually served each response** (`message.model`),
 not just the one requested. A run silently split across model versions is two
 measurements presented as one. See `references/pitfalls.md`.
+
+**When the instrument legitimately changes.** Researchers do revise prompts, and the
+revision is a new instrument rather than an edit. Four things follow, and all four
+are easy to skip: snapshot the prompt *before* editing (a prompt edited in place is
+unrecoverable, and it is the audit trail for everything already extracted under it);
+diff the revision against the JSON Schema, since a new field or enum value the schema
+does not list is silently constrained away and the revision measures nothing; archive
+records extracted under the old instrument rather than merging them; and re-run the
+pilot, because all four pre-run checks belong to the instrument, not the corpus.
+`references/pitfalls.md` #11 has the detail.
 
 ## 3. Constrain the output
 
@@ -128,7 +140,50 @@ corruption risk.
 status / fetch, with the homogeneity check, both pre-run checks, and multi-account
 key handling. Adapt the schema and column names; keep the control flow.
 
-## 6. Report reliability with the estimates
+## 6. Check the output against the source
+
+If the schema asks the model to quote the source, whether it actually quoted is
+mechanically checkable — one of the few quality properties that needs no judgment.
+Locate every quoted span in its source document.
+
+Write this check carefully or it will lie to you. PDF text layers inject running
+headers and footers mid-sentence, and a quote that reads straight through one fails
+a naive substring test with the exact signature of a spliced quote. On a real
+hand-check that produced 7 false splices in 56 statements and a confident, wrong
+conclusion about a prompt revision; the true count was 0. Strip running furniture
+first, rejoin wrapped hyphens as `-\s+` → `-`, and report a normalization ladder
+rather than one number — `exact` matched 0 of 56 genuine verbatim quotations on
+those filings. `references/pitfalls.md` #10 has the full trap;
+`scripts/handcheck.py` implements the check.
+
+Diagnose failures rather than counting them. A spliced quote has a signature: its
+longest matching prefix and longest matching suffix are each real runs of source
+text and together account for the whole span. That separates it from a single
+altered word mid-quote (prefix and suffix overlap) and from paraphrase (no matching
+tail).
+
+## 7. Validate against human annotation
+
+Reproducibility is not validity. A model can be perfectly reproducible and
+consistently wrong, and repeated passes cannot detect it — only a human reading can.
+
+Draw a validation sample (100 documents is a reasonable default), annotate it by
+hand under a written codebook, and compare field by field. The disagreement rate is
+the misclassification rate the downstream estimates get corrected for.
+
+The one rule that makes or breaks this: **the annotation codebook and the extraction
+prompt must stay separate documents.** Copying the annotator's boundary rules into
+the prompt drives the measured disagreement toward zero by construction. The
+temptation is strongest exactly when annotation reveals a boundary the prompt handles
+badly.
+
+Expect uneven error rates across fields, and report them rather than smoothing them.
+A field with a genuinely contestable category boundary will disagree more, and that
+surfaces honestly as a wider bias-corrected interval. `references/validation.md`
+covers the design, the codebook, and why a low error rate still has to be carried
+into the second stage.
+
+## 8. Report reliability with the estimates
 
 If the extracted fields become regression variables, their measurement error
 attenuates coefficients. Compute the ICC from repeated passes and state it. This
@@ -161,6 +216,12 @@ Two that recur:
   fixes. Read this before writing any extraction code.
 - `references/reproducibility.md` — how to measure run-to-run variance and what the
   numbers mean for downstream inference.
+- `references/validation.md` — the human-annotated validation sample: codebook
+  discipline, blind annotation, and correcting estimates for measured
+  misclassification.
 - `scripts/extract_api.py` — reference implementation of the submit/status/fetch
   pipeline.
 - `scripts/prepare_corpus.py` — builds the single-file corpus from a source table.
+- `scripts/handcheck.py` — renders documents beside their extractions and locates
+  every quoted span in the source, diagnosing any that fail.
+- `scripts/report.py` — progress, field distributions, and document-level shares.

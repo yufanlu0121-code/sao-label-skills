@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 from collections import Counter
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,13 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent
 NARRATIVES_PATH = BASE_DIR / "narratives.parquet"
+
+# Extractions live outside Dropbox (see HANDOFF ss2), so --dir is resolved against
+# the same output root extract_api.py writes to, not against this directory. An
+# absolute --dir still overrides, and a relative one is taken from the output root.
+DEFAULT_OUT_ROOT = Path(
+    os.environ.get("SAO_OUT_ROOT", Path.home() / "sao_extract_output")
+)
 
 STATEMENT_FIELDS = [
     "orientation",
@@ -305,7 +313,7 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=20, help="topics to list")
     args = parser.parse_args()
 
-    directory = BASE_DIR / args.dir
+    directory = DEFAULT_OUT_ROOT / args.dir
     if not directory.exists():
         raise SystemExit(f"{directory} does not exist.")
 
@@ -322,7 +330,7 @@ def main() -> None:
     report_topics(records, args.top)
 
     if args.compare:
-        report_comparison(BASE_DIR / "raw", BASE_DIR / "raw_api")
+        report_comparison(DEFAULT_OUT_ROOT / "raw", DEFAULT_OUT_ROOT / "raw_api")
 
 
 if __name__ == "__main__":
