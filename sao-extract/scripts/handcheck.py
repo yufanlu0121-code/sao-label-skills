@@ -1,30 +1,22 @@
-"""Check extracted quotations against their source text, and diagnose failures.
+"""Regenerate the side-by-side hand-check of a few pilot extractions.
 
-TEMPLATE: adapt `DEFAULT_IDS`, `STATEMENT_COLUMNS`, and `DOCUMENT_FIELDS` to your
-schema. The substring machinery -- furniture stripping, normalization ladder, splice
-diagnosis -- is domain-independent.
+The hand-check exists so the extractions can be read against the source narrative
+without loading 11M words of corpus into anything. It is regenerated rather than
+hand-maintained: the measurement instrument gets revised (HANDOFF §1.2a), and a
+report that cannot be rebuilt from the current `raw_full/` silently goes stale.
 
-When a schema asks the model to quote the source, "did it actually quote?" is a
-checkable property, and checking it naively produces false alarms. This script
-renders each document beside its extraction and locates every quoted span in the
-source at four strictnesses:
+Section 4 is the substantive check. A `verbatim` that cannot be located in the
+source narrative was not quoted -- it was spliced from separated passages or
+paraphrased -- and that is the failure mode the 2026-08-23 prompt revision targets.
+Matching is reported at three strictnesses so a genuine splice is distinguished from
+a mere typographic difference:
 
-    exact      the string as returned
-    ws         whitespace collapsed on both sides (PDF text wraps mid-sentence)
-    punct      ws, plus curly quotes/dashes folded and wrapped hyphens rejoined
-    +hdr       punct, with running page headers and footers removed -- AUTHORITATIVE
+    exact      the string as returned, found in the narrative as-is
+    ws         whitespace collapsed on both sides (source PDFs wrap mid-sentence)
+    punct      ws, plus curly quotes/dashes/ellipses folded to ASCII and end-of-line
+               hyphenation repaired
 
-Only `+hdr` is informative. The three weaker levels are reported to show how much of
-an apparent failure is PDF noise: on real filings `exact` matched 0 of 56 spans that
-were all, in fact, verbatim quotations.
-
-A failure at `+hdr` is diagnosed rather than merely counted. A spliced quote has a
-signature -- its longest matching prefix and longest matching suffix are each real
-runs of source text and together account for the whole span -- which distinguishes
-"joined two non-adjacent passages" from "altered one word mid-quote" (prefix and
-suffix overlap) and from paraphrase (no matching tail).
-
-See `references/pitfalls.md` #10 for why the furniture strip is not optional.
+Only a failure at `punct` indicates the model did not quote contiguously.
 """
 
 from __future__ import annotations

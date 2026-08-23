@@ -33,4 +33,4 @@ files are real measurements from that run.
 | `references/reproducibility.md` | Measuring run-to-run variance; what ICC means for inference |
 | `references/validation.md` | Human-annotated validation sample; codebook discipline; correcting for measured misclassification |
 | `assets/codebook_template.md` | Starting point for the annotator's codebook |
-| `scripts/` | Working submit/status/fetch pipeline, corpus builder, quotation check, reporting |
+| `scripts/` | Working submit/status/fetch pipeline, corpus builder, quotation check, validation-sample workbook, reporting |

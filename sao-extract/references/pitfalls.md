@@ -47,6 +47,28 @@ Streaming is required for operations that may take longer than 10 minutes
 The Batches API is asynchronous and exempt. Ad-hoc synchronous scripts at a large
 ceiling must use `client.messages.stream(...)`.
 
+### 1a. Truncation is not a function of document length
+
+A length-ordered probe does **not** bound the worst case. On a full 8,472-document
+run the single truncated response came from a document at the **98th percentile of
+length**, while the longest document in the corpus completed comfortably. With
+adaptive thinking the reasoning tokens come from the same budget and vary
+independently of the input, so a mid-length document can consume the whole ceiling.
+
+The same document, re-submitted **unchanged**, completed on the first retry using
+**3,295 output tokens** against the 32,000+ it had consumed before. That is the
+remedy: re-submit at the same ceiling, because the reasoning path is redrawn on every
+call. Raising `max_tokens` changes the treatment signature and splits the run into
+two measurements — reserve it for repeated truncation, never for one document.
+
+### 1b. The near-limit counter must include truncated responses
+
+If the headroom counter is tallied *after* the `max_tokens` rejection, it excludes
+exactly the responses it exists to detect. A full run reported `0 response(s) at
+>=90% of the ceiling` on every one of 18 batches while a document was being truncated
+inside one of them. Tally before the rejection, and print the truncation count on the
+same line.
+
 ## 2. Output contamination survives JSON parsing
 
 Structured output should return bare JSON, but reasoning markers or code fences can
@@ -233,3 +255,68 @@ Then treat the revision as what it is: a new instrument.
 - **Label archived reports by the instrument that produced them**, read from that
   run's batch state — not by hashing the prompt file on disk, which now holds a
   different instrument.
+
+## 12. Document ids that are legal locally but illegal in the API
+
+`custom_id` on the Batches API must match `^[a-zA-Z0-9_-]{1,64}$`. A key built from
+metadata will eventually violate it — a fallback to the company name yields
+`United Fire Group, Inc._2023_v1`, with spaces, a comma and a period.
+
+The failure is a 400 that rejects **the entire batch**, naming one offending request
+by index:
+
+```
+requests.449.custom_id: String should match pattern '^[a-zA-Z0-9_-]{1,64}$'
+```
+
+Nothing in that batch is queued. On a run split into chunks, the chunks before it
+succeed and the rest do not, so the run stops half-submitted.
+
+Substitute a deterministic digest for offending keys, `cid_<sha256[:40]>`, and store
+the reverse mapping with the batch so results are written under the real id. Keep
+valid keys unchanged so existing batches are unaffected, and make the substitution
+deterministic rather than positional so a resubmission produces the same id.
+
+Note the coupling that makes this more than cosmetic: if `custom_id` doubles as the
+output filename, supporting these keys means threading an id mapping through submit,
+fetch, the in-flight check, and the done check. Decide early whether the transport id
+and the storage id are the same thing.
+
+## 13. A failure file that never clears
+
+If failures are written only when a fetch produces them, a record left by an earlier
+fetch survives a successful retry. The file then describes a state that no longer
+exists, and any check keyed on its existence — including a stop condition — fires
+forever on a stale entry.
+
+Rewrite it against reality on every fetch: merge new failures with what is recorded,
+filter to the ids that still have no valid output, and delete the file when nothing
+is outstanding. Log how many records were cleared, so a retry that worked is visible.
+
+## 14. A metadata join that fails silently removes a biased slice
+
+Documents whose metadata comes from a join can lose it, and the filters that follow
+then drop them without anyone deciding to. On a real corpus 114 eligible documents
+carried no year, no entity code and no name, so a filing-year filter removed them
+before any exclusion was recorded — a data-quality exclusion wearing the costume of a
+design one.
+
+It was not random. The cause was provenance: those documents were ingested without
+the manifest the metadata comes from, and **65% of them belonged to a single year**,
+which was consequently the thinnest year in the panel.
+
+Three lessons:
+
+- **Reconcile the exclusion arithmetic.** The documented drop counts did not sum to
+  the observed total, and the gap was exactly the unattributable rows. A sample table
+  whose rows do not add up is hiding something.
+- **Look for identifiers outside the join.** The source filename carried both the
+  company name and the opinion date for all 114, and a second, independent recovery
+  from the document body agreed with it on every one.
+- **Recovered rows are mostly duplicates, so count before running.** Of 114, only 43
+  were new estimable observations: 44 duplicated documents already in the corpus
+  under proper metadata, and 21 could not be matched to an entity code at all. Decide
+  on the number of *new* rows, not the number of orphans.
+
+When recovering, mark the recovered rows and make deduplication prefer the original,
+or a recovered scrape can displace a document that has already been processed.

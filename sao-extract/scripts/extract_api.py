@@ -2,36 +2,8 @@
 
 TEMPLATE: adapt build_schema() and TOPLEVEL_KEYS to your output schema. Everything
 else -- homogeneity enforcement, truncation and contamination checks, spread-sampled
-pilots, resumability, multi-account keys -- is domain-independent.
-
-Narratives are read from `narratives.parquet` (built by `prepare_full.py`) and one
-JSON extraction is written per filing to `raw_full/{sao_id}.json`. No intermediate
-text files are created: the universe is ~8.6k filings and this directory syncs to
-Dropbox.
-
-The measurement instrument is `prompt.md`, read byte-for-byte from disk and sent as
-the system prompt; the narrative is the sole user message. `prompt.md` must not be
-edited mid-run -- every filing has to be scored by the same instrument, and
-`assert_homogeneous` aborts a submit whose treatment differs from earlier batches.
-
-Three subcommands, run in order:
-
-    python3 extract_api.py submit --limit 20     # pilot: 20 filings
-    python3 extract_api.py status                # poll until "ended"
-    python3 extract_api.py fetch                 # write raw_full/*.json
-
-Then re-run `submit` with no --limit for the rest. `submit` only ever queues filings
-that lack a valid `raw_full/{sao_id}.json`, so an interrupted or partially failed run
-is resumed by simply running the three commands again.
-
-Credentials: one API key per line in `~/.sao_keys.txt` (override with SAO_KEY_FILE),
-or a single key in ANTHROPIC_API_KEY. With several keys, `--key N` picks which account
-submits a batch, so a run can be split across accounts when one is short on quota. A
-batch belongs to the account that created it, so the index used at submit time is
-recorded in the state file and reused automatically by `status` and `fetch` --
-fetching with the wrong key returns a 404.
-
-Requires `pip install anthropic`.
+pilots, custom_id sanitising, resumability, multi-account keys -- is
+domain-independent.
 """
 
 from __future__ import annotations
@@ -41,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -518,6 +491,34 @@ def save_state(state: dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+CUSTOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def custom_id_for(key: str) -> str:
+    """Return a batch-safe `custom_id` for a filing key.
+
+    The Batches API constrains `custom_id` to `^[a-zA-Z0-9_-]{1,64}$`. Most keys are
+    `{naic_code}_{year}_{v}` and pass unchanged, but a filing whose `naic_code` is
+    null falls back to its company name, which carries spaces, commas and periods --
+    `United Fire Group, Inc._2023_v1` -- and the whole batch is rejected with a 400
+    naming one offending request. Those keys are replaced by a deterministic digest;
+    every batch records the mapping so `fetch` can write the output under the real
+    `sao_id`.
+
+    Substitution is deterministic and collision-resistant rather than positional, so
+    resubmitting the same filing yields the same `custom_id`.
+
+    Args:
+        key: The filing's `sao_id`.
+
+    Returns:
+        The key itself when it is already valid, else a `cid_`-prefixed digest.
+    """
+    if CUSTOM_ID_RE.match(key):
+        return key
+    return "cid_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
+
+
 def build_request(
     key: str,
     text: str,
@@ -554,7 +555,7 @@ def build_request(
         }
 
     return Request(
-        custom_id=key,
+        custom_id=custom_id_for(key),
         params=MessageCreateParamsNonStreaming(**params),
     )
 
@@ -625,6 +626,12 @@ def cmd_submit(args: argparse.Namespace) -> None:
                 "key_index": args.key,
                 "signature": signature,
                 "custom_ids": list(chunk),
+                # custom_id -> sao_id, for the keys that had to be substituted.
+                # Only the substituted ones are stored; an absent entry means the
+                # custom_id is the sao_id.
+                "cid_map": {
+                    custom_id_for(k): k for k in chunk if custom_id_for(k) != k
+                },
                 "fetched": False,
             }
         )
@@ -713,8 +720,11 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         response_models: dict[str, int] = {}
         usage_in = 0
         usage_out = 0
+        cid_map = entry.get("cid_map") or {}
         for result in client.messages.batches.results(entry["id"]):
-            stem = result.custom_id
+            # Keys that needed substitution are mapped back, so output is always
+            # written under the real sao_id.
+            stem = cid_map.get(result.custom_id, result.custom_id)
             kind = result.result.type
 
             if kind != "succeeded":
@@ -734,12 +744,16 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             usage_in += message.usage.input_tokens
             usage_out += message.usage.output_tokens
 
+            # Counted before the max_tokens rejection below. Tallying it after would
+            # exclude every response that actually hit the ceiling -- precisely the
+            # cases this early-warning counter exists to surface -- and a full run
+            # can then report "0 at >=90%" while filings are being truncated.
+            if message.usage.output_tokens >= MAX_TOKENS * TRUNCATION_HEADROOM:
+                near_limit.append((stem, message.usage.output_tokens))
             if message.stop_reason == "max_tokens":
                 failures.append({"stem": stem, "reason": "max_tokens"})
                 truncated += 1
                 continue
-            if message.usage.output_tokens >= MAX_TOKENS * TRUNCATION_HEADROOM:
-                near_limit.append((stem, message.usage.output_tokens))
             if message.stop_reason == "refusal":
                 failures.append({"stem": stem, "reason": "refusal"})
                 continue
@@ -788,18 +802,23 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         # Reported every fetch, not only on failure: a rising near-limit count is the
         # early warning that the corpus tail is longer than the pilot suggested.
         logger.info(
-            "Batch %s: stop_reason %s | %d response(s) at >=%.0f%% of the %s ceiling",
+            "Batch %s: stop_reason %s | %d response(s) at >=%.0f%% of the %s ceiling "
+            "(truncated included) | %d truncated",
             entry["id"],
             stop_reasons or "n/a",
             len(near_limit),
             TRUNCATION_HEADROOM * 100,
             f"{MAX_TOKENS:,}",
+            truncated,
         )
         if truncated:
             logger.error(
                 "%d response(s) in batch %s hit max_tokens (%d) and were rejected. "
-                "Truncation targets the longest filings, so this is not random "
-                "missingness. Raise MAX_TOKENS and re-run `submit` before continuing.",
+                "They stay pending. Re-running `submit` unchanged is the first "
+                "remedy: adaptive thinking re-paths on every call, and output length "
+                "does not track input length, so a repeat attempt often completes at "
+                "the same ceiling. Raise MAX_TOKENS only if repeats keep truncating "
+                "-- it changes the treatment signature and splits the run.",
                 truncated,
                 entry["id"],
                 MAX_TOKENS,
@@ -822,12 +841,40 @@ def cmd_fetch(args: argparse.Namespace) -> None:
                 response_models,
             )
 
-    if failures:
-        FAILED_PATH.write_text(json.dumps(failures, indent=2), encoding="utf-8")
+    # The failure file has to describe what is outstanding *now*, not everything that
+    # ever failed. A filing that failed on one fetch and succeeded on a retry is not
+    # a failure any more, and leaving its record behind means the file's existence --
+    # which is a run-blocking signal -- stays true forever and stops meaning anything.
+    # Entries are therefore merged with what is already recorded and then filtered
+    # against the output directory, and the file is removed when nothing is left.
+    recorded: dict[str, dict[str, str]] = {}
+    if FAILED_PATH.exists():
+        try:
+            for item in json.loads(FAILED_PATH.read_text(encoding="utf-8")):
+                recorded[item["stem"]] = item
+        except (json.JSONDecodeError, KeyError, TypeError):
+            logger.warning("%s was unreadable; rebuilding it.", FAILED_PATH.name)
+            recorded = {}
+    for item in failures:
+        recorded[item["stem"]] = item
+
+    outstanding = [item for stem, item in recorded.items() if not is_done(stem)]
+    resolved = len(recorded) - len(outstanding)
+    if outstanding:
+        FAILED_PATH.write_text(json.dumps(outstanding, indent=2), encoding="utf-8")
         logger.warning(
-            "%d requests did not produce a usable extraction — see %s. "
+            "%d request(s) did not produce a usable extraction — see %s. "
             "They remain pending; re-run `submit` to retry them.",
-            len(failures),
+            len(outstanding),
+            FAILED_PATH.name,
+        )
+    elif FAILED_PATH.exists():
+        FAILED_PATH.unlink()
+    if resolved:
+        logger.info(
+            "%d previously failed filing(s) now have a valid extraction; "
+            "cleared from %s.",
+            resolved,
             FAILED_PATH.name,
         )
 
