@@ -1,31 +1,15 @@
 """Build the extraction corpus as a single parquet file.
 
-TEMPLATE: adapt TEXT_COL, KEY_COL, COLUMNS and DEFAULT_YEARS to your source table.
-The control flow -- filter, dedupe, single-file output, cost estimate -- is the part
-worth keeping.
-
-Selects every filing in the source with a non-empty Relevant Comments section,
-restricts to filing years 2019-2025, drops repeated scrapes, and writes the result
-to `narratives.parquet` -- one file, not one file per filing.
-
-    python3 prepare_full.py "/path/to/sao_texts_full_v3.parquet"
-
-`extract_api.py` reads that parquet directly, so no intermediate text files are
-produced. Rows are keyed by `sao_id`: 119 eligible rows across the source have a
-null `naic_code`, so `{naic_code}_{filing_year}` cannot address them, whereas
-`sao_id` is unique throughout.
-
-Deduplication keeps the lowest `dup_suffix` (v1) per `naic_code + filing_year`. The
-source carries repeated scrapes of the same filing that are near-always identical;
-extracting all of them would pay twice for the same text. `--no-dedup` keeps every
-scrape, which is only useful for studying scrape-to-scrape variation.
-
-The source parquet is opened read-only and never written back.
+TEMPLATE: adapt the column names, the eligibility filter, and the identifier-recovery
+rule to your source. The structure -- one parquet rather than one file per document,
+a stable key, deduplication with an explicit fallback, and recovery of identifiers
+that a metadata join failed to supply -- is domain-independent.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import logging
 import os
 import sys
@@ -38,7 +22,18 @@ NARRATIVES_PATH = BASE_DIR / "narratives.parquet"
 
 TEXT_COL = "section_relevant_comments"
 KEY_COL = "sao_id"
-COLUMNS = [KEY_COL, "naic_code", "filing_year", "company_name", "dup_suffix", TEXT_COL]
+COLUMNS = [
+    KEY_COL,
+    "naic_code",
+    "filing_year",
+    "company_name",
+    "dup_suffix",
+    "pdf_basename",
+    TEXT_COL,
+]
+# `{Company}_PNC-AS_{YYYY-MM-DD}...` -- the source filename carries the identifiers
+# that the CIQ manifest join failed to supply.
+BASENAME_RE = re.compile(r"^(.*?)_PNC-AS_(\d{4})-(\d{2})-(\d{2})")
 
 DEFAULT_YEARS = (2019, 2025)
 
@@ -80,12 +75,15 @@ def resolve_source(raw: str | None) -> Path:
     return source
 
 
-def load_eligible(path: Path, years: tuple[int, int]) -> pd.DataFrame:
+def load_eligible(
+    path: Path, years: tuple[int, int], recover: bool = True
+) -> pd.DataFrame:
     """Read the source and keep rows with a usable narrative in range.
 
     Args:
         path: Path to the source parquet.
         years: Inclusive (min, max) filing-year filter.
+        recover: Whether to recover missing identifiers from `pdf_basename` first.
 
     Returns:
         A new DataFrame of eligible rows with an `n_words` column.
@@ -100,12 +98,88 @@ def load_eligible(path: Path, years: tuple[int, int]) -> pd.DataFrame:
     eligible = frame.loc[text.notna() & (text.astype(str).str.strip() != "")].copy()
     logger.info("Non-empty narrative: %s", f"{len(eligible):,}")
 
+    if recover:
+        eligible = recover_metadata(eligible)
+    else:
+        eligible["_recovered"] = False
+
     lo, hi = years
     eligible = eligible.loc[eligible["filing_year"].between(lo, hi)].copy()
     logger.info("Filing years %d-%d: %s", lo, hi, f"{len(eligible):,}")
 
     eligible["n_words"] = eligible[TEXT_COL].astype(str).str.split().str.len()
     return eligible
+
+
+def normalize_name(value: object) -> str:
+    """Reduce a company name to a comparable form.
+
+    Args:
+        value: A company name, or anything else.
+
+    Returns:
+        A new lowercase string with punctuation and common suffixes removed.
+    """
+    text = re.sub(r"[^a-z0-9 ]", " ", str(value).lower())
+    text = re.sub(r"\b(inc|llc|corp|corporation|co|company|the|a|an)\b", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def recover_metadata(frame: pd.DataFrame) -> pd.DataFrame:
+    """Fill `filing_year`, `company_name` and `naic_code` from the source filename.
+
+    114 eligible rows carry no `filing_year`, `naic_code` or `company_name`: their
+    metadata comes from the CIQ archive manifest, and they were ingested without one
+    (72 of them as loose `standalone` PDFs from a single 2021 event). The year filter
+    then drops them silently, which is a data-quality exclusion masquerading as a
+    design one -- and not a random one: 74 of the 114 are 2021 filings.
+
+    `pdf_basename` carries both identifiers verbatim, and the NAIC code is recovered
+    by matching the parsed name against names that appear elsewhere in this source
+    with a code. Rows that cannot be matched keep their nulls and are handled by
+    `dedupe` as before.
+
+    Recovery is marked in `_recovered` so downstream work can report these rows
+    separately, and so `dedupe` can prefer an original row over a recovered one when
+    both describe the same filing.
+
+    Args:
+        frame: Eligible rows, before the year filter.
+
+    Returns:
+        A new DataFrame with recovered identifiers filled in.
+    """
+    out = frame.copy()
+    out["_recovered"] = False
+    missing = out["filing_year"].isna()
+    if not missing.any():
+        return out
+
+    parsed = out.loc[missing, "pdf_basename"].map(
+        lambda b: BASENAME_RE.match(str(b))
+    )
+    names = parsed.map(lambda m: m.group(1) if m else None)
+    years = parsed.map(lambda m: int(m.group(2)) if m else pd.NA)
+
+    lookup: dict[str, object] = {}
+    coded = out.loc[out["naic_code"].notna()]
+    for name, code in zip(coded["company_name"], coded["naic_code"]):
+        if isinstance(name, str) and name.strip():
+            lookup.setdefault(normalize_name(name), code)
+    codes = names.map(lambda n: lookup.get(normalize_name(n)) if n else None)
+
+    out.loc[missing, "company_name"] = names
+    out.loc[missing, "filing_year"] = pd.array(years, dtype="Int64")
+    out.loc[missing, "naic_code"] = codes
+    out.loc[missing, "_recovered"] = True
+    logger.info(
+        "Recovered metadata for %d row(s) from pdf_basename: %d with a year, "
+        "%d also matched to a naic_code.",
+        int(missing.sum()),
+        int(years.notna().sum()),
+        int(codes.notna().sum()),
+    )
+    return out
 
 
 def dedupe(frame: pd.DataFrame) -> pd.DataFrame:
@@ -122,19 +196,43 @@ def dedupe(frame: pd.DataFrame) -> pd.DataFrame:
     """
     version = frame["dup_suffix"].astype(str).str.extract(r"(\d+)", expand=False)
     ordered = frame.assign(_v=pd.to_numeric(version, errors="coerce").fillna(0))
-    ordered = ordered.sort_values(["naic_code", "filing_year", "_v"], kind="mergesort")
+    # `_recovered` precedes `_v` so that when an original row and a row recovered
+    # from its filename describe the same filing, the original wins. Reversing this
+    # would drop a filing that has already been extracted and silently replace it
+    # with a different scrape of the same document.
+    ordered = ordered.sort_values(
+        ["naic_code", "filing_year", "_recovered", "_v"], kind="mergesort"
+    )
 
     keyed = ordered.loc[ordered["naic_code"].notna()]
     unkeyed = ordered.loc[ordered["naic_code"].isna()]
-    if len(unkeyed):
-        logger.warning(
-            "%d row(s) have a null naic_code and cannot be deduplicated by filing; "
-            "all are kept.",
-            len(unkeyed),
-        )
 
     deduped = keyed.drop_duplicates(subset=["naic_code", "filing_year"], keep="first")
-    result = pd.concat([deduped, unkeyed]).drop(columns="_v")
+
+    # A null naic_code defeats the primary key, and keeping every such row meant
+    # repeated scrapes of one filing survived as separate observations: United Fire
+    # Group 2023 entered the corpus four times, four correlated rows in the panel and
+    # four times the extraction cost for one document. Company name plus filing year
+    # identifies the filing well enough to collapse them. Rows that lack a usable
+    # name too are kept, since nothing can group them.
+    named = unkeyed.loc[unkeyed["company_name"].notna()]
+    nameless = unkeyed.loc[unkeyed["company_name"].isna()]
+    fallback = named.drop_duplicates(subset=["company_name", "filing_year"], keep="first")
+    if len(named) > len(fallback):
+        logger.warning(
+            "%d row(s) have a null naic_code; deduplicated on company_name + "
+            "filing_year instead, dropping %d repeated scrape(s).",
+            len(named),
+            len(named) - len(fallback),
+        )
+    if len(nameless):
+        logger.warning(
+            "%d row(s) have neither a naic_code nor a company_name and cannot be "
+            "deduplicated at all; all are kept.",
+            len(nameless),
+        )
+
+    result = pd.concat([deduped, fallback, nameless]).drop(columns="_v")
     logger.info(
         "After dedupe: %s (dropped %s repeated scrapes)",
         f"{len(result):,}",
@@ -157,7 +255,7 @@ def write_narratives(frame: pd.DataFrame) -> None:
 
     out = frame[
         [KEY_COL, "naic_code", "filing_year", "company_name", "dup_suffix", "n_words",
-         TEXT_COL]
+         "_recovered", TEXT_COL]
     ].sort_values(KEY_COL, ignore_index=True)
     out.to_parquet(NARRATIVES_PATH, index=False)
 
@@ -203,6 +301,11 @@ def main() -> None:
         help="keep every scrape rather than the lowest dup_suffix per filing",
     )
     parser.add_argument(
+        "--no-recover",
+        action="store_true",
+        help="skip recovering identifiers from pdf_basename for rows missing them",
+    )
+    parser.add_argument(
         "--years",
         nargs=2,
         type=int,
@@ -214,7 +317,9 @@ def main() -> None:
     args = parser.parse_args()
 
     source = resolve_source(args.source)
-    eligible = load_eligible(source, (args.years[0], args.years[1]))
+    eligible = load_eligible(
+        source, (args.years[0], args.years[1]), recover=not args.no_recover
+    )
     if not args.no_dedup:
         eligible = dedupe(eligible)
 

@@ -41,6 +41,18 @@ Key rows by an id that always exists. A composite key built from metadata
 (`{entity}_{year}`) breaks the moment some rows have a null component, and the
 breakage is silent: those documents just never get processed.
 
+The same nulls break deduplication, which is worse because it is invisible: rows the
+key cannot group are usually kept, so repeated scrapes of one document survive as
+separate observations — four correlated rows in the panel and four times the cost for
+one document. Give deduplication an explicit fallback key and state what happens to
+rows that match neither.
+
+And check what the metadata join dropped before it reached you. Documents that lost
+their metadata are removed by whatever filter comes next, with no exclusion recorded,
+and the slice removed is rarely random — `references/pitfalls.md` #14 has a case where
+65% of them came from one year, which then looked like the thinnest year in the
+panel. Reconcile the exclusion counts; if they do not sum, that is the tell.
+
 ## 2. Freeze the instrument
 
 The prompt is a measurement instrument. Editing it mid-run makes documents scored
@@ -116,6 +128,14 @@ is the single most informative thing you can do, and it is usually skipped.
 **Cost.** Fit output tokens on document length across the *full* length range.
 A fit estimated on short documents extrapolates badly to the tail.
 
+⚠️ **A length-ordered probe does not bound truncation risk.** With adaptive thinking,
+output length is driven by the reasoning path, not the input: on a full run the only
+truncated document sat at the 98th percentile of length while the longest completed,
+and re-submitting it unchanged finished in 3,295 tokens against 32,000+ before. Probe
+the longest documents to learn what long documents cost, then treat truncation as a
+lottery to be retried, not a length threshold to be engineered around
+(`references/pitfalls.md` #1a).
+
 ## 5. Submit resumably
 
 Use the Batches API — half price, and asynchronous so long generations don't hit
@@ -130,7 +150,14 @@ Three properties matter:
 - **Results are keyed by `custom_id`, never by position.** Batch results return in
   arbitrary order.
 - **Failures stay pending.** A truncated, contaminated, or errored response is
-  quarantined and not written, so the next submit retries it. Never hand-patch.
+  quarantined and not written, so the next submit retries it. Never hand-patch. Make
+  the failure record describe what is outstanding *now* — one written only when a
+  fetch produces failures will keep a stale entry alive after a successful retry, and
+  anything keyed on its existence then fires forever (`references/pitfalls.md` #13).
+- **The transport id is not necessarily your document id.** `custom_id` must match
+  `^[a-zA-Z0-9_-]{1,64}$`, and one offending key rejects the whole batch with a 400,
+  leaving a chunked run half-submitted. Substitute a deterministic digest and keep a
+  reverse mapping (#12).
 
 Write output **outside any synced folder**. Thousands of small files appearing over
 hours will fight the sync client, and a half-synced output directory is real
@@ -225,3 +252,5 @@ Two that recur:
 - `scripts/handcheck.py` — renders documents beside their extractions and locates
   every quoted span in the source, diagnosing any that fail.
 - `scripts/report.py` — progress, field distributions, and document-level shares.
+- `scripts/validation_sample.py` — draws the hand-annotation sample and writes the
+  workbook, with `--blind` to withhold the model's labels.
