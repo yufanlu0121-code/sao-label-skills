@@ -152,3 +152,84 @@ the truncation probe.
 Input tokens are worth measuring rather than assuming: dense domain text (names,
 figures, legal terminology) tokenises far worse than English prose. One corpus
 measured **2.26 tokens per word** against a typical ~1.3.
+
+## 10. Quotation checks report false splices on PDF furniture
+
+If the schema asks the model to quote the source, verifying that the quote is
+really in the source is one of the few fully mechanical checks available. Written
+naively it produces alarming, entirely false results.
+
+Source PDFs inject a running header or footer into the text layer, frequently
+**mid-sentence**:
+
+```
+...and has not exhibited large numbers of late reported claims, and because this
+
+Applied Medico-Legal Solutions, RRG
+SAO 12/31/2024
+
+Page 3
+business is a relatively small portion of the Company's total experience...
+```
+
+A model that reads straight through this is behaving correctly — and if the prompt
+says so explicitly ("page headers and footers injected mid-sentence may be skipped
+over"), it is doing exactly what it was told. But a substring test against the raw
+text fails, and the failure has the exact signature of a spliced quote: the longest
+matching prefix and the longest matching suffix are each genuine runs of source
+text and together account for the whole span.
+
+On a real hand-check this produced **7 false splices in 56 statements (12.5%)** and
+a confident, wrong conclusion that a prompt revision had backfired. After stripping
+furniture the true count was **0 of 56**.
+
+Two fixes, both required:
+
+- **Strip running furniture before matching.** Identify it from the document, not
+  from a hard-coded name: a short line (< 80 chars) repeating three or more times
+  is running furniture whatever it says. Long lines are never removed, so a repeated
+  sentence of substance survives. Hard-coding fails immediately — one filing repeats
+  the insurer's name with `Page N` markers, the next repeats an auditor's footer
+  (`A member firm of Ernst & Young Global Limited`) with no page numbers at all.
+- **Rejoin wrapped hyphens as `-\s+` → `-`, not by closing the word up.** PDF
+  wrapping splits hyphenated compounds: the source reads `non- collectability`
+  where the quote reads `non-collectability`. Collapsing to `noncollectability`
+  fails to match and looks like a mid-quote edit.
+
+Report the normalization ladder (`exact` / `ws` / `punct` / `+hdr`) rather than one
+number. On real filings `exact` matched **0 of 56** spans that were all genuine
+verbatim quotations, so an exact-match rate says nothing about extraction quality
+and everything about the PDF.
+
+**Never act on a splice count from a checker that has not stripped page furniture.**
+`scripts/handcheck.py` implements this.
+
+## 11. A revised prompt silently constrained by a stale schema
+
+When the instrument legitimately changes mid-project, the JSON Schema is a
+*separate* structural contract and does not change with it. A revision that adds a
+field, renames one, or introduces an enum value the schema does not list is
+**silently voided**: `output_config.format` constrains the model to the old shape,
+the run completes cleanly, and the revision has no effect on the data.
+
+Diff the revised prompt against the schema before spending anything. Fields, enum
+members, and nullability all have to line up. A revision that only sharpens judgment
+rules — how to adjudicate an existing enum, how to choose quote boundaries — needs no
+schema change, and confirming that is a two-minute check that prevents paying for a
+run that measures nothing new.
+
+Then treat the revision as what it is: a new instrument.
+
+- **Snapshot the prompt before editing it.** A prompt edited in place is
+  unrecoverable, and the superseded text is the audit trail for anything already
+  extracted under it. On the SAO run the original prompt survived only in the sync
+  provider's version history.
+- **Archive, never merge.** Records extracted under the old instrument are a
+  different measurement. Move them out of the output directory together with their
+  batch state, with a README saying why they cannot be recombined.
+- **Re-run the pilot.** All four pre-run checks belong to the instrument, not to the
+  corpus, and statement counts drive output length: the SAO revision raised the
+  longest document from 22 extracted statements to 38.
+- **Label archived reports by the instrument that produced them**, read from that
+  run's batch state — not by hashing the prompt file on disk, which now holds a
+  different instrument.
