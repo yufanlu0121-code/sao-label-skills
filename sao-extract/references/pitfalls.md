@@ -357,3 +357,27 @@ Also check what the sampling design itself reveals. Stratifying on predicted cla
 means *which* rows were drawn from a document is weakly informative — a filing
 contributing only its one rare-category row is a hint. That one is inherent to the
 design rather than fixable, and belongs in the paper's limitations.
+
+## 16. A JSON Schema cannot express your instrument's conditional rules
+
+`output_config.format` constrains each field independently. Prompts routinely carry
+rules that relate one field to another — *this field is null unless that field takes
+one of these values* — and the schema has no way to express them. A violation parses
+cleanly, satisfies every structural check, and lands in the dataset.
+
+On a real corpus one such rule ("populate `direction` only when `moment` is `level` or
+`both`") was violated by **16 statements in 95,142**. Nothing in the pipeline was
+looking: not the schema, not the contamination check, not the reconciliation between
+tables. 0.017% is small, but the variable built from that field treats those rows as
+directional when the instrument says they are not, and the error is systematic rather
+than random — it concentrates in the rows where the model had a directional reading it
+could not express through the field it was given.
+
+Enumerate the conditional rules in your prompt and check them explicitly after fetch.
+They are cheap to write and they are the only thing looking.
+
+**Check the rules, not the aims.** Instruments usually mix the two, and testing an aim
+as a rule buries the real violations in noise. The same prompt asked for quotes of
+20–80 words *and* said to quote a longer sentence whole — so a word-band check flags
+14.6% of the corpus, none of it a violation. Only rules the instrument states
+unconditionally belong in a conformance check.

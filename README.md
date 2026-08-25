@@ -69,7 +69,7 @@ with numbers attached instead of quietly picking the cheaper option.
 
 ### The failure-mode catalogue
 
-`references/pitfalls.md` documents fifteen, each with the mechanism, the symptom and the
+`references/pitfalls.md` documents sixteen, each with the mechanism, the symptom and the
 fix:
 
 | | |
@@ -91,6 +91,7 @@ fix:
 | 13 | A failure file that never clears |
 | 14 | A metadata join that fails silently removes a biased slice |
 | 15 | The context you show the annotator can encode the model's answer |
+| 16 | A JSON Schema cannot express your instrument's conditional rules |
 
 Several are counter-intuitive enough to be worth naming here. Truncation is **not** a
 length problem, so probing your longest documents does not bound the risk — with
@@ -128,7 +129,7 @@ wrong, will not error, and nothing downstream will flag it.
 | Path | What it is |
 |---|---|
 | `SKILL.md` | The eight-step pipeline, and which decisions belong to the researcher |
-| `references/pitfalls.md` | Fifteen silent failure modes, with the exact errors and fixes |
+| `references/pitfalls.md` | Sixteen silent failure modes, with the exact errors and fixes |
 | `references/reproducibility.md` | Measuring run-to-run variance; what ICC means for inference |
 | `references/validation.md` | Validation sample design, codebook discipline, stratification and weights |
 | `assets/codebook_template.md` | Starting point for the annotator's codebook |

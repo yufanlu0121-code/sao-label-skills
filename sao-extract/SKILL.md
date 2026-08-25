@@ -93,6 +93,14 @@ Nullable enums need `anyOf`, not a type list — `{"type": ["string","null"],
 "enum": [...]}` is rejected. See `references/pitfalls.md` for the exact error and
 fix.
 
+**The schema will not enforce your conditional rules.** It constrains each field
+independently, so a prompt rule relating one field to another — *this is null unless
+that is one of these values* — is structurally invisible to it. Enumerate those rules
+and check them after fetch: on a real run one such rule was violated 16 times in 95,142
+items with nothing else looking (`references/pitfalls.md` #16). Check the rules your
+instrument states unconditionally, not the aims it expresses — testing an aim as a rule
+buries real violations in false ones.
+
 ## 4. Pilot before committing
 
 Run a small pilot and check four things. Each maps to a failure mode that

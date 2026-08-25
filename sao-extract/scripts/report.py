@@ -192,6 +192,50 @@ def report_distributions(records: dict[str, dict[str, Any]]) -> None:
         logger.info("%-24s %s", field, summary)
 
 
+def report_conformance(records: dict[str, dict[str, Any]]) -> None:
+    """Check the instrument's conditional rules, which the JSON Schema cannot express.
+
+    A JSON Schema constrains each field independently. `prompt.md` also carries rules
+    that relate one field to another -- `direction` is populated only when `moment` is
+    `level` or `both`, and is null otherwise -- and a violation of those is structurally
+    invisible to the schema, parses cleanly, and passes every other check in the
+    pipeline.
+
+    This check inherited the one rule worth keeping from the retired `validate.py`. Its
+    other check, a 20-80 word band on `verbatim`, is deliberately not reproduced:
+    `prompt.md` states that band as an aim and explicitly overrides it ("if a single
+    sentence exceeds 80 words, quote it whole"), so testing it as a rule flags roughly
+    an eighth of the corpus as violations that are not violations.
+
+    Args:
+        records: Extraction records keyed by filing id.
+    """
+    violations: list[tuple[str, int, str]] = []
+    for key, record in records.items():
+        for index, statement in enumerate(record.get("statements", [])):
+            moment = statement.get("moment")
+            direction = statement.get("direction")
+            if moment == "uncertainty" and direction is not None:
+                violations.append((key, index, f"moment=uncertainty, direction={direction}"))
+            elif moment in {"level", "both"} and direction is None:
+                violations.append((key, index, f"moment={moment}, direction=null"))
+
+    logger.info("")
+    logger.info("--- INSTRUMENT CONFORMANCE (cross-field rules) ---")
+    if not violations:
+        logger.info("direction/moment rule: no violations")
+        return
+    logger.warning(
+        "direction/moment rule: %d violation(s) — the schema cannot catch these, "
+        "and they are extraction defects, not parse errors.",
+        len(violations),
+    )
+    for key, index, detail in violations[:10]:
+        logger.warning("  %s#%d  %s", key, index, detail)
+    if len(violations) > 10:
+        logger.warning("  ... and %d more", len(violations) - 10)
+
+
 def report_shares(frame: pd.DataFrame) -> None:
     """Log the filing-level moments used to judge regression viability.
 
@@ -326,6 +370,7 @@ def main() -> None:
     report_counts(frame)
     report_distributions(records)
     report_shares(frame)
+    report_conformance(records)
     report_coverage(records)
     report_topics(records, args.top)
 
