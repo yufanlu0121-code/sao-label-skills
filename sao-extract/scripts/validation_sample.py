@@ -181,6 +181,11 @@ def build(n: int, out_dir: Path, blind: bool) -> tuple[str, pd.DataFrame]:
         "Code `orientation`, `object`, `moment` per statement and `rmad_conclusion` "
         "per filing in the blank columns.",
         "",
+        "**This file is the record.** Type your codes into the blank columns and "
+        "save it in place — it lives in the project directory so it syncs and is "
+        "backed up. Nothing regenerates it: `validation_sample.py` refuses to "
+        "overwrite an existing workbook without `--force`.",
+        "",
     ]
     if not blind:
         header += [
@@ -204,7 +209,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=100, help="filings to draw")
     parser.add_argument("--dir", default="raw_full", help="extraction directory")
-    parser.add_argument("--out", default="validation_sample.md", help="output file")
+    parser.add_argument(
+        "--out",
+        default="validation_coding.md",
+        help="output file, relative to this directory unless absolute",
+    )
+    parser.add_argument(
+        "--index",
+        action="store_true",
+        help="also write the draw index as CSV beside the workbook",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing workbook (destroys any coding already entered)",
+    )
     parser.add_argument(
         "--blind",
         action="store_true",
@@ -216,19 +235,35 @@ def main() -> None:
     if not out_dir.exists():
         raise SystemExit(f"{out_dir} does not exist.")
 
+    # The workbook is the one artefact here that a human types into, so it lives
+    # beside the code in the synced project directory rather than in the extraction
+    # output root. The rule that keeps output out of Dropbox exists because 8,532
+    # machine-written JSON files churn the sync client; a single hand-edited file is
+    # the case that rule is protecting, not the case it is guarding against.
+    target = Path(args.out)
+    if not target.is_absolute():
+        target = BASE_DIR / target
+    if target.exists() and not args.force:
+        raise SystemExit(
+            f"{target} already exists. Coding entered there would be overwritten — "
+            "pass --force only if you are sure, or choose another --out."
+        )
+
     document, drawn = build(args.n, out_dir, args.blind)
-    target = DEFAULT_OUT_ROOT / args.out
     target.write_text(document, encoding="utf-8")
-    index_path = target.with_suffix(".csv")
-    drawn[["sao_id", "naic_code", "filing_year", "company_name", "n_words"]].to_csv(
-        index_path, index=False
-    )
+    written = [target.name]
+    if args.index:
+        index_path = target.with_suffix(".csv")
+        drawn[
+            ["sao_id", "naic_code", "filing_year", "company_name", "n_words"]
+        ].to_csv(index_path, index=False)
+        written.append(index_path.name)
     logger.info(
-        "Wrote %s (%d filings, %d bytes) and %s.",
-        target,
+        "Wrote %s (%d filings, %d bytes) in %s.",
+        " and ".join(written),
         len(drawn),
         len(document),
-        index_path.name,
+        target.parent,
     )
 
 
