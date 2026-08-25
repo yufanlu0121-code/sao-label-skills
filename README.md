@@ -138,6 +138,7 @@ wrong, will not error, and nothing downstream will flag it.
 | `scripts/validation_sample.py` | Simple random annotation sample as markdown, `--blind` to withhold labels |
 | `scripts/build_validation_workbook.py` | Stratified two-level draw, recorded weights, protected xlsx |
 | `scripts/report.py` | Progress, field distributions, document-level shares |
+| `scripts/assemble.py` | Item-level and document-level tables, reconciled against each other |
 
 The scripts are working code rather than sketches, written against one project and
 marked `TEMPLATE` where they need adapting — the schema, the column names, the

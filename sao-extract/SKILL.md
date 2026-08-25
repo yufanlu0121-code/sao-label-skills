@@ -227,7 +227,28 @@ surfaces honestly as a wider bias-corrected interval. `references/validation.md`
 covers the design, the codebook, and why a low error rate still has to be carried
 into the second stage.
 
-## 8. Report reliability with the estimates
+## 8. Assemble, and report reliability with the estimates
+
+Explode the records into an item-level table and a document-level table, and
+**reconcile them against each other** — item rows must equal the summed per-document
+counts. That check catches a key collision, which otherwise surfaces as a quietly wrong
+regression rather than an error.
+
+Address records by a stable key, not by parsing the filename. A `{entity}_{year}` stem
+breaks on the documents whose entity id is null — exactly the ones a fallback key was
+introduced for — and cannot be joined back to the corpus for the metadata the tables
+need anyway.
+
+Refuse to assemble while any document still lacks an extraction. Assembling early drops
+those rows silently, and the resulting table looks complete.
+
+`scripts/assemble.py` implements this. Two things it will not do for you: decide whether
+a document with no items gets NaN or 0 for its share variables (it uses NaN plus an
+explicit indicator, because 0 asserts a measurement that was never made), and decide
+between two constructs that are easy to conflate — the *share* of items of some kind,
+and whether the document contains *any*. Both are meaningful and they are not the same
+variable; this script emits both under distinct names rather than letting one silently
+win.
 
 If the extracted fields become regression variables, their measurement error
 attenuates coefficients. Compute the ICC from repeated passes and state it. This
@@ -269,6 +290,8 @@ Two that recur:
 - `scripts/handcheck.py` — renders documents beside their extractions and locates
   every quoted span in the source, diagnosing any that fail.
 - `scripts/report.py` — progress, field distributions, and document-level shares.
+- `scripts/assemble.py` — builds the item-level and document-level tables, reconciled
+  against each other.
 - `scripts/validation_sample.py` — draws a simple random annotation sample as
   markdown, with `--blind` to withhold the model's labels.
 - `scripts/build_validation_workbook.py` — the stratified version: two draws, recorded
