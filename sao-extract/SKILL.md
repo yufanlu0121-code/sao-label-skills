@@ -194,15 +194,32 @@ tail).
 Reproducibility is not validity. A model can be perfectly reproducible and
 consistently wrong, and repeated passes cannot detect it — only a human reading can.
 
-Draw a validation sample (100 documents is a reasonable default), annotate it by
-hand under a written codebook, and compare field by field. The disagreement rate is
-the misclassification rate the downstream estimates get corrected for.
+Draw a validation sample, annotate it by hand under a written codebook, and compare
+field by field. The disagreement rate is the misclassification rate the downstream
+estimates get corrected for.
+
+**Stratify on the model's own labels, and carry the weights.** A simple random sample
+spends nearly all its rows on the majority class. Stratifying on predicted class with
+a floor per cell makes rare categories estimable — and is valid only if the inclusion
+probabilities reach the analysis stage, because an unweighted analysis of a
+disproportionately allocated sample is wrong and will not error. Compute `pi` at the
+finest level you actually allocated at, and check that `sum(weight)` reconstructs the
+population exactly. `scripts/build_validation_workbook.py` implements this;
+`references/validation.md` has the four failure modes.
 
 The one rule that makes or breaks this: **the annotation codebook and the extraction
 prompt must stay separate documents.** Copying the annotator's boundary rules into
 the prompt drives the measured disagreement toward zero by construction. The
 temptation is strongest exactly when annotation reveals a boundary the prompt handles
 badly.
+
+**Withholding the labels is not the same as being blind.** Anything whose shape varies
+with the model's output leaks it — most easily the context you provide to help the
+coder. Build every row's context the same way, without consulting the model's output,
+and audit by crosstabbing each derived column against the model's label: any column
+that predicts it is a channel. `references/pitfalls.md` #15 has a case where a
+helpfully centred context window encoded the answer for a quarter of the sample while
+no label appeared anywhere in the workbook.
 
 Expect uneven error rates across fields, and report them rather than smoothing them.
 A field with a genuinely contestable category boundary will disagree more, and that
@@ -252,5 +269,7 @@ Two that recur:
 - `scripts/handcheck.py` — renders documents beside their extractions and locates
   every quoted span in the source, diagnosing any that fail.
 - `scripts/report.py` — progress, field distributions, and document-level shares.
-- `scripts/validation_sample.py` — draws the hand-annotation sample and writes the
-  workbook, with `--blind` to withhold the model's labels.
+- `scripts/validation_sample.py` — draws a simple random annotation sample as
+  markdown, with `--blind` to withhold the model's labels.
+- `scripts/build_validation_workbook.py` — the stratified version: two draws, recorded
+  inclusion probabilities and weights, and a protected xlsx with dropdowns.

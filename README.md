@@ -20,9 +20,28 @@ JSON parsing, treatment drift across batches, prompt revisions silently voided b
 stale schema, quotation checks that report false splices on PDF page furniture, and
 the measurement reliability (ICC) and validity of variables derived this way.
 
-Built for the SAO project — extracting risk statements from 8,475 US P&C
-Statement of Actuarial Opinion filings — and the numbers quoted in the reference
-files are real measurements from that run.
+Built for the SAO project — extracting risk statements from US P&C Statement of
+Actuarial Opinion filings — and every number quoted in the reference files is a real
+measurement from that run, including the mistakes.
+
+### Where that run actually stands
+
+| | |
+|---|---|
+| Extraction | **Complete.** 8,532 filings, 95,142 statements, 21 batches, $395.37 |
+| Homogeneity | One treatment signature throughout; all 8,533 responses served by one model |
+| Failures | None outstanding. 1 truncation in 8,470, fixed by re-submitting unchanged |
+| Quotation check | 56/56 spans located in source on the hand-checked filings, 0 splices |
+| Validation sample | **Drawn, not yet coded.** 1,000 statements across 25 strata + 150 documents |
+| Misclassification rates | **Not yet measured.** The workbook exists; the hand-coding has not been done |
+
+The corpus was 8,475 for most of the run and is 8,532 now: deduplication was fixed
+(−3, one filing had entered four times) and 60 filings whose metadata a failed join had
+lost were recovered from their source filenames (+60). Both are documented as pitfalls
+rather than tidied away.
+
+Nothing here reports an accuracy figure for the extraction, because none has been
+measured yet. `references/validation.md` describes how it will be.
 
 ### Contents
 

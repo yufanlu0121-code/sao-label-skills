@@ -320,3 +320,40 @@ Three lessons:
 
 When recovering, mark the recovered rows and make deduplication prefer the original,
 or a recovered scrape can displace a document that has already been processed.
+
+## 15. The context you show the annotator can encode the model's answer
+
+A blind workbook withholds the model's labels. That is not sufficient. Anything whose
+*shape* varies with the model's output is a channel, and the obvious place it hides is
+the context you helpfully provide.
+
+A concrete case. The workbook shows ~600 characters of narrative around the sentence
+carrying a document-level conclusion, so the coder reads the author's own words. The
+natural implementation centres that window on the sentence the model extracted. But
+when the model returns nothing for that field, there is no sentence to centre on, and
+those documents get a visibly different kind of window. On a 150-document draw the
+correlation was near-total:
+
+| context built from | model said `not_stated` | model said anything else |
+|---|---|---|
+| the extracted sentence | 0 | 113 |
+| fallback | 37 | 0 |
+
+A coder who notices that "this one doesn't show me a clear sentence" is being told the
+model's answer. Nothing in the workbook contained a label.
+
+**Build the context the same way for every row, without consulting the model's
+output.** Locating the passage by keyword instead of by extracted sentence covered 136
+of 150 documents identically across all classes. The remaining 14 fall back because the
+document never mentions the subject — a property of the source text, which is what
+should drive that code anyway, and not something the model told the coder.
+
+Audit for this by crosstabbing every derived column against the model's label. Any
+column that predicts it is a leak: context provenance, row height, ordering, how many
+rows a document contributes, whether a field is blank. `_recovered`-style provenance
+flags are usually safe; anything derived from the model's own output usually is not.
+
+Also check what the sampling design itself reveals. Stratifying on predicted class
+means *which* rows were drawn from a document is weakly informative — a filing
+contributing only its one rare-category row is a hint. That one is inherent to the
+design rather than fixable, and belongs in the paper's limitations.
