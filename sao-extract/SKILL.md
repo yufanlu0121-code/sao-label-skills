@@ -84,6 +84,20 @@ records extracted under the old instrument rather than merging them; and re-run 
 pilot, because all four pre-run checks belong to the instrument, not the corpus.
 `references/pitfalls.md` #11 has the detail.
 
+### Add a narrow supplementary instrument without reopening the primary prompt
+
+When a new construct can be measured independently, version it as an additive
+instrument with its own prompt, schema, treatment signature, pilot, outputs, and
+freeze manifest. Run it over the full corpus instead of assigning the default
+category to records that a regex did not select. This removes the regex recall
+assumption while preserving the frozen primary measurement.
+
+The RMAD reserve-basis implementation is frozen in
+`assets/rmad_basis_prompt_v1.0.md` and
+`assets/rmad_basis_schema_v1.0.json`. Its validation design and mixed empirical
+results are documented in `references/rmad_basis_validation_v1.0.md`; consult
+that file before interpreting a net-basis recode.
+
 ## 3. Constrain the output
 
 Use `output_config.format` with a JSON Schema rather than asking for JSON in

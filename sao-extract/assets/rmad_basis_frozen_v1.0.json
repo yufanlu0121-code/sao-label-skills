@@ -1,0 +1,96 @@
+{
+  "effort": "high",
+  "files": {
+    "output/data/rmad_basis_four_cells_v1_0.csv": {
+      "bytes": 722,
+      "sha256": "5b8f423b754b03955a7865c263a50579624e617f1a2c30bf6a14f98733de6bcc"
+    },
+    "output/data/rmad_basis_full_v1_0.parquet": {
+      "bytes": 356450,
+      "sha256": "295e37a168fe593ea5d8aafad7e8d494688c4024439b3a8b0ea657ffaf33eb7a"
+    },
+    "output/data/rmad_basis_full_validation_v1_0.json": {
+      "bytes": 1212,
+      "sha256": "570783400fc1eafd2c6cf46130736fc2038f0bd547d491481176a36f8ef04622"
+    },
+    "output/data/rmad_basis_interactions_v1_0.csv": {
+      "bytes": 3235,
+      "sha256": "82f582d10912150017e07e0633b70c2aa37fca9d2d3fb6ed90a6d445c28402af"
+    },
+    "output/data/rmad_basis_pilot_r1_v1_0.parquet": {
+      "bytes": 40797,
+      "sha256": "a7ef32efc29d2e32dbaeb7d5a8148a3e8630c02f01740793fd1cef5f74ddaf17"
+    },
+    "output/data/rmad_basis_pilot_r2_v1_0.parquet": {
+      "bytes": 40928,
+      "sha256": "dc8ed5f4ba64f078b96e36207151825d11843305401dd00849ab98c74aec3ceb"
+    },
+    "output/data/rmad_basis_pilot_validation_v1_0.json": {
+      "bytes": 2465,
+      "sha256": "0c22b0464758fa66f3a6f8aa37b5d4bd2737d18d4df97a923b1115e4e777ddb5"
+    },
+    "output/reports/rmad_basis_full_validation_v1_0.md": {
+      "bytes": 2229,
+      "sha256": "7499dcff32d21639c30870a88f111a98d3d29fa88137e1bfc077ac2444503f58"
+    },
+    "output/reports/rmad_basis_gross_evidence_audit_v1_0.md": {
+      "bytes": 1360,
+      "sha256": "390e70faad01b3185db65b402a34e85b97011506cbd73b84b7c0bede16b81e47"
+    },
+    "output/reports/rmad_basis_pilot_validation_v1_0.md": {
+      "bytes": 980,
+      "sha256": "ae196a00f94b2f480627506f4a1dfd46de2eb910e093079811f3913eaf9d24ca"
+    },
+    "output/tables/rmad_basis_four_cells_v1_0.tex": {
+      "bytes": 591,
+      "sha256": "dc6967bb60d7a04118721ad85b4106a1280f6c16296f94d4999137903023b577"
+    },
+    "output/tables/rmad_basis_interactions_v1_0.tex": {
+      "bytes": 1181,
+      "sha256": "78f0a62f6326ca5290d41a50cd1b1a157875b401409eadb9ea8331ebdeb3bb1c"
+    },
+    "output/tables/rmad_basis_pilot_validation_v1_0.tex": {
+      "bytes": 418,
+      "sha256": "a506d6a4f308a44fa9ca62bbf43db77b4afc592a6ee9f8a05112d91c048c7dab"
+    },
+    "rmad_basis_prompt_v1.0.md": {
+      "bytes": 2241,
+      "sha256": "34f5c8c116cc920ecf5233584d075bf3a0c48bb4c48efed59b888ed4ded910e4"
+    },
+    "rmad_basis_schema_v1.0.json": {
+      "bytes": 444,
+      "sha256": "4a148ad0b0983581ce34fed41879a331f429588c8c8c9c2d778db4bca5f4bd3e"
+    },
+    "scripts/classify_rmad_basis.py": {
+      "bytes": 34465,
+      "sha256": "2fec9efb432c408668a2fe8b1c6eeed08e8bd27700ac48d5d1e47637adf3b545"
+    },
+    "scripts/validate_rmad_basis.py": {
+      "bytes": 34115,
+      "sha256": "edaabc05459e87cb8486fba3b03905be3184f78ed2fb3776049231dc4065b494"
+    },
+    "tests/test_rmad_basis.py": {
+      "bytes": 6529,
+      "sha256": "f0e4447d75c4c26afa49621f142f187e056266cf7df914e47003bbcd73446dda"
+    }
+  },
+  "instrument_version": "rmad_basis_v1.0",
+  "max_tokens": 32000,
+  "model": "claude-opus-5",
+  "random_state": 666,
+  "status": "frozen",
+  "thinking": "adaptive",
+  "treatment_signature": {
+    "effort": "high",
+    "input_ids_sha256": "2e09400772c9a0673af931a9c5cba3434fbb8235de866d7518f3c1cf8444c2fb",
+    "instrument_version": "rmad_basis_v1.0",
+    "max_tokens": 32000,
+    "model": "claude-opus-5",
+    "n_selected": 8532,
+    "prompt_sha256": "34f5c8c116cc920ecf5233584d075bf3a0c48bb4c48efed59b888ed4ded910e4",
+    "random_state": 666,
+    "schema_sha256": "c076fd08aeae48f3470ada9953f169b83dd0385d6c4d85ad267b68a0be436517",
+    "structured": true,
+    "thinking": "adaptive"
+  }
+}

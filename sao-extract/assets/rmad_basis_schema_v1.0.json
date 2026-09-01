@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "rmad_basis": {
+      "type": "string",
+      "enum": [
+        "net",
+        "gross",
+        "both",
+        "unspecified"
+      ]
+    },
+    "evidence": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 800
+    }
+  },
+  "required": [
+    "rmad_basis",
+    "evidence"
+  ],
+  "additionalProperties": false
+}
